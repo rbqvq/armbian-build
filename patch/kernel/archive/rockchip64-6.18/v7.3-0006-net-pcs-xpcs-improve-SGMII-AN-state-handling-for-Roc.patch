@@ -1,0 +1,112 @@
+From 53676f15f17050ae15e65c4580fc22e20cd788b7 Mon Sep 17 00:00:00 2001
+From: Coia Prant <coiaprant@gmail.com>
+Date: Tue, 7 Jul 2026 03:41:10 +0800
+Subject: [PATCH 06/10] net: pcs: xpcs: improve SGMII AN state handling for
+ Rockchip RK3568
+
+Commit 2a22b7ae2fa3 ("net: pcs: xpcs: adapt Wangxun NICs for SGMII mode")
+added support for reading CL37_ANCMPLT_INTR and then reading BMCR for
+speed/duplex.  This may work on Wangxun hardware but not on Rockchip RK3568.
+
+On RK3568, reading BMCR returns a fixed value (HW Reset Value or Write
+Manual) instead of the negotiated result, so the correct speed/duplex
+must be read from CL37_ANSGM_STS.  Also, when the link is down,
+CL37_ANCMPLT_INTR stays set and the PCS does not restart AN automatically
+when the PHY link returns, so an explicit AN restart via BMCR_ANRESTART
+is needed.
+
+Modify xpcs_get_state_c37_sgmii() to check CL37_ANSGM_STS for link
+status first.  If the link is up, report the state.  If AN is complete
+(CL37_ANCMPLT_INTR set), clear the interrupt and restart AN for
+non-Wangxun platforms.  The original Wangxun-specific path is kept
+unchanged unless we confirm it's a bug not a feature.
+
+Also clear CL37 AN complete status in xpcs_config_aneg_c37_sgmii()
+before starting AN to ensure a clean initial state.
+
+Fixes: 2a22b7ae2fa3 ("net: pcs: xpcs: adapt Wangxun NICs for SGMII mode")
+Signed-off-by: Coia Prant <coiaprant@gmail.com>
+---
+ drivers/net/pcs/pcs-xpcs.c | 31 ++++++++++++++++++++++++++++---
+ 1 file changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/pcs/pcs-xpcs.c b/drivers/net/pcs/pcs-xpcs.c
+index e69fa2f0a0e8d..cf370ba247cac 100644
+--- a/drivers/net/pcs/pcs-xpcs.c
++++ b/drivers/net/pcs/pcs-xpcs.c
+@@ -816,6 +816,11 @@ static int xpcs_config_aneg_c37_sgmii(struct dw_xpcs *xpcs,
+ 	if (ret < 0)
+ 		return ret;
+ 
++	/* Clear CL37 AN complete status */
++	ret = xpcs_write(xpcs, MDIO_MMD_VEND2, DW_VR_MII_AN_INTR_STS, 0);
++	if (ret < 0)
++		return ret;
++
+ 	if (neg_mode == PHYLINK_PCS_NEG_INBAND_ENABLED)
+ 		ret = xpcs_write(xpcs, MDIO_MMD_VEND2, MII_BMCR,
+ 				 mdio_ctrl | BMCR_ANENABLE);
+@@ -884,7 +889,7 @@ static int xpcs_config_aneg_c37_1000basex(struct dw_xpcs *xpcs,
+ 
+ 	if (neg_mode == PHYLINK_PCS_NEG_INBAND_ENABLED) {
+ 		ret = xpcs_write(xpcs, MDIO_MMD_VEND2, MII_BMCR,
+-				 mdio_ctrl | BMCR_ANENABLE);
++				 mdio_ctrl | BMCR_ANENABLE | BMCR_ANRESTART);
+ 		if (ret < 0)
+ 			return ret;
+ 	}
+@@ -1058,6 +1063,7 @@ static int xpcs_get_state_c37_sgmii(struct dw_xpcs *xpcs,
+ 
+ 	/* Reset link_state */
+ 	state->link = false;
++	state->an_complete = false;
+ 	state->speed = SPEED_UNKNOWN;
+ 	state->duplex = DUPLEX_UNKNOWN;
+ 	state->pause = 0;
+@@ -1069,6 +1075,8 @@ static int xpcs_get_state_c37_sgmii(struct dw_xpcs *xpcs,
+ 	if (ret < 0)
+ 		return ret;
+ 
++	state->an_complete = ret & DW_VR_MII_AN_STS_C37_ANCMPLT_INTR;
++
+ 	if (ret & DW_VR_MII_C37_ANSGM_SP_LNKSTS) {
+ 		int speed_value;
+ 
+@@ -1086,7 +1094,24 @@ static int xpcs_get_state_c37_sgmii(struct dw_xpcs *xpcs,
+ 			state->duplex = DUPLEX_FULL;
+ 		else
+ 			state->duplex = DUPLEX_HALF;
+-	} else if (ret == DW_VR_MII_AN_STS_C37_ANCMPLT_INTR) {
++
++		return 0;
++	}
++
++	/* Clear AN complete status or interrupt */
++	if (state->an_complete)
++		xpcs_write(xpcs, MDIO_MMD_VEND2, DW_VR_MII_AN_INTR_STS, 0);
++
++	if (xpcs->info.pma != WX_TXGBE_XPCS_PMA_10G_ID) {
++		/* If the link down, restart Auto-Negotiation */
++		if (state->an_complete)
++			xpcs_modify(xpcs, MDIO_MMD_VEND2, MII_BMCR, BMCR_ANRESTART,
++				    BMCR_ANRESTART);
++
++		return 0;
++	}
++
++	if (ret == DW_VR_MII_AN_STS_C37_ANCMPLT_INTR) {
+ 		int speed, duplex;
+ 
+ 		state->link = true;
+@@ -1112,7 +1137,7 @@ static int xpcs_get_state_c37_sgmii(struct dw_xpcs *xpcs,
+ 		else if (duplex & ADVERTISE_1000XHALF)
+ 			state->duplex = DUPLEX_HALF;
+ 
+-		xpcs_write(xpcs, MDIO_MMD_VEND2, DW_VR_MII_AN_INTR_STS, 0);
++		return 0;
+ 	}
+ 
+ 	return 0;
+-- 
+2.47.3
+

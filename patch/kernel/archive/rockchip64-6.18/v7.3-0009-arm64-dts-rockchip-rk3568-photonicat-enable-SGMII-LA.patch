@@ -1,0 +1,170 @@
+From dde86b5fc159adcdee782fc18dede006ef11a727 Mon Sep 17 00:00:00 2001
+From: Coia Prant <coiaprant@gmail.com>
+Date: Thu, 2 Jul 2026 21:22:12 +0800
+Subject: [PATCH 09/10] arm64: dts: rockchip: rk3568-photonicat: enable SGMII
+ LAN port
+
+The Ariaboard Photonicat has a Motorcomm YT8521SC Gigabit Ethernet PHY
+connected to GMAC0 via SGMII. Enable the necessary nodes to make this
+port functional.
+
+- Enable combphy2 with rockchip,sgmii-mac-sel = <0> to route SGMII
+  to GMAC0.
+- Enable gmac0 with phy-mode "sgmii", set the pcs-handle to the
+  XPCS MII port 0, and specify the phy-handle for the YT8521SC.
+- Add the mdio0 bus and the sgmii_phy node for the YT8521SC.
+- Enable the xpcs node with rockchip,pcs-mode "sgmii" and the
+  required phys/phy-names/power-domains properties, and enable
+  the xpcs_mii0 sub-node.
+
+The gmac0 transmit clock is sourced from the xpcsclk fixed clock,
+which provides the required 125 MHz reference.
+
+Signed-off-by: Coia Prant <coiaprant@gmail.com>
+---
+ .../boot/dts/rockchip/rk3568-photonicat.dts   | 37 ++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3568-photonicat.dts b/arch/arm64/boot/dts/rockchip/rk3568-photonicat.dts
+index 58c1052ba8ef3..1db62d82fa297 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3568-photonicat.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3568-photonicat.dts
+@@ -3,6 +3,7 @@
+ /dts-v1/;
+ 
+ #include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/leds/common.h>
+ #include <dt-bindings/pinctrl/rockchip.h>
+ #include <dt-bindings/soc/rockchip,vop2.h>
+ #include "rk3568.dtsi"
+@@ -242,6 +243,7 @@ &combphy1 {
+ 
+ &combphy2 {
+ 	status = "okay";
++	rockchip,sgmii-mac-sel = <0>;
+ };
+ 
+ &cpu0 {
+@@ -260,9 +262,18 @@ &cpu3 {
+ 	cpu-supply = <&vdd_cpu>;
+ };
+ 
+-/* Motorcomm YT8521SC LAN port (require SGMII) */
++/* Motorcomm YT8521SC LAN port */
+ &gmac0 {
+-	status = "disabled";
++	assigned-clocks = <&cru SCLK_GMAC0_RX_TX>;
++	assigned-clock-parents = <&xpcs_gmac0_clk>;
++	pcs-handle = <&xpcs_mii0>;
++	managed = "in-band-status";
++	phy-handle = <&sgmii_phy>;
++	phy-mode = "sgmii";
++	phy-supply = <&vcc_3v3>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&gmac0_miim>;
++	status = "okay";
+ };
+ 
+ /* Motorcomm YT8521SC WAN port */
+@@ -341,6 +352,39 @@ &i2s0_8ch {
+ 	status = "okay";
+ };
+ 
++&mdio0 {
++	sgmii_phy: ethernet-phy@3 {
++		compatible = "ethernet-phy-id0000.011a";
++		reg = <0x3>;
++		max-speed = <1000>;
++		eee-broken-10gt;
++		eee-broken-10gkx4;
++		eee-broken-10gkr;
++		reset-assert-us = <20000>;
++		reset-deassert-us = <100000>;
++		reset-gpios = <&gpio3 RK_PC6 GPIO_ACTIVE_LOW>;
++
++		leds {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			led@1 {
++				reg = <1>;
++				color = <LED_COLOR_ID_AMBER>;
++				function = LED_FUNCTION_LAN;
++				default-state = "keep";
++			};
++
++			led@2 {
++				reg = <2>;
++				color = <LED_COLOR_ID_GREEN>;
++				function = LED_FUNCTION_LAN;
++				default-state = "keep";
++			};
++		};
++	};
++};
++
+ &mdio1 {
+ 	rgmii_phy: ethernet-phy@3 {
+ 		compatible = "ethernet-phy-ieee802.3-c22";
+@@ -350,6 +394,25 @@ rgmii_phy: ethernet-phy@3 {
+ 		reset-gpios = <&gpio4 RK_PC0 GPIO_ACTIVE_LOW>;
+ 		rx-internal-delay-ps = <1500>;
+ 		tx-internal-delay-ps = <1500>;
++
++		leds {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			led@1 {
++				reg = <1>;
++				color = <LED_COLOR_ID_AMBER>;
++				function = LED_FUNCTION_WAN;
++				default-state = "keep";
++			};
++
++			led@2 {
++				reg = <2>;
++				color = <LED_COLOR_ID_GREEN>;
++				function = LED_FUNCTION_WAN;
++				default-state = "keep";
++			};
++		};
+ 	};
+ };
+ 
+@@ -520,6 +543,18 @@ &uart3 {
+ &uart4 {
+ 	dma-names = "tx", "rx";
+ 	status = "okay";
++
++	pcat-pm {
++		compatible = "photonicat-pm";
++		baudrate = <115200>;
++		force-poweroff-timeout = <30>;
++		pm-version = <1>;
++		power-gpio = <&gpio1 RK_PB2 GPIO_ACTIVE_LOW>;
++
++		charger {
++			monitored-battery = <&battery>;
++		};
++	};
+ };
+ 
+ /* M.2 E-Key for USB Bluetooth */
+@@ -586,3 +609,13 @@ &xin32k {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&clk32k_out1>;
+ };
++
++&xpcs {
++	status = "okay";
++	phys = <&combphy2 PHY_TYPE_SGMII>;
++	phy-names = "serdes";
++};
++
++&xpcs_mii0 {
++	status = "okay";
++};
+-- 
+2.47.3
+

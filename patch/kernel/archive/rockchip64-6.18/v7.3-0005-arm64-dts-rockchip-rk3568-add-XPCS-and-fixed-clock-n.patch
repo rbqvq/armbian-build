@@ -1,0 +1,90 @@
+From 1df7677951a58ef00d083f50cca8c4fe8cf50168 Mon Sep 17 00:00:00 2001
+From: Coia Prant <coiaprant@gmail.com>
+Date: Thu, 2 Jul 2026 19:05:25 +0800
+Subject: [PATCH 05/10] arm64: dts: rockchip: rk3568: add XPCS and fixed-clock
+ nodes
+
+The RK3568 SoC integrates a Synopsys DesignWare XPCS that provides
+the Physical Coding Sublayer for 1000BASE-X, SGMII, and QSGMII
+interfaces via its four MII ports.  Add the XPCS device node and
+its pcs-mii sub-nodes to the SoC device tree.
+
+The XPCS device is accessed via the APB3 bus at 0xfda00000 and
+requires the CSR clock (PCLK_XPCS) for register access and the EEE
+clock (CLK_XPCS_EEE) for Energy Efficient Ethernet operation.  The
+PD_PIPE power domain must be enabled before any register access.
+
+Also add two fixed-clock nodes (xpcs_gmac0_clk and xpcs_gmac1_clk)
+providing the 125 MHz reference clock for the GMACs when operating
+with XPCS.  These clocks are used as the assigned-clock-parents
+for the respective GMAC nodes.
+
+All nodes are left disabled by default and must be enabled at the
+board level when 1000BASE-X/SGMII/QSGMII is in use.  The XPCS node
+also requires a reference to the appropriate Naneng Combo PHY via
+the phys property at the board level.
+
+Signed-off-by: Coia Prant <coiaprant@gmail.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3568.dtsi | 45 ++++++++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3568.dtsi b/arch/arm64/boot/dts/rockchip/rk3568.dtsi
+index 3bc653f027f1f..989e164c0eb39 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3568.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3568.dtsi
+@@ -110,6 +110,51 @@ sata0: sata@fc000000 {
+ 		status = "disabled";
+ 	};
+ 
++	xpcs: pcs@fda00000 {
++		compatible = "rockchip,rk3568-xpcs";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <0x0 0xfda00000 0x0 0x200000>;
++		clocks = <&cru PCLK_XPCS>, <&cru CLK_XPCS_EEE>;
++		clock-names = "csr", "eee";
++		power-domains = <&power RK3568_PD_PIPE>;
++		status = "disabled";
++
++		xpcs_mii0: pcs-mii@0 {
++			reg = <0>;
++			status = "disabled";
++		};
++
++		xpcs_mii1: pcs-mii@1 {
++			reg = <1>;
++			status = "disabled";
++		};
++
++		xpcs_mii2: pcs-mii@2 {
++			reg = <2>;
++			status = "disabled";
++		};
++
++		xpcs_mii3: pcs-mii@3 {
++			reg = <3>;
++			status = "disabled";
++		};
++	};
++
++	xpcs_gmac0_clk: xpcs-gmac0-clock {
++		compatible = "fixed-clock";
++		clock-frequency = <125000000>;
++		clock-output-names = "clk_gmac0_xpcs_mii";
++		#clock-cells = <0>;
++	};
++
++	xpcs_gmac1_clk: xpcs-gmac1-clock {
++		compatible = "fixed-clock";
++		clock-frequency = <125000000>;
++		clock-output-names = "clk_gmac1_xpcs_mii";
++		#clock-cells = <0>;
++	};
++
+ 	pipe_phy_grf0: syscon@fdc70000 {
+ 		compatible = "rockchip,rk3568-pipe-phy-grf", "syscon";
+ 		reg = <0x0 0xfdc70000 0x0 0x1000>;
+-- 
+2.47.3
+
